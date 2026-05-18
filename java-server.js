@@ -63,6 +63,7 @@ class JavaServer extends EventEmitter {
     this._logs          = [];
     this._crashCount    = 0;
     this._stabilityTimer = null;
+    this._restartTimer  = null;
     this._pollFn        = pollUntilReady;
   }
 
@@ -70,6 +71,7 @@ class JavaServer extends EventEmitter {
   getLogs()  { return [...this._logs]; }
 
   async spawnServer(port) {
+    if (this._state !== 'idle') throw new Error(`Cannot spawn: server is in state '${this._state}'`);
     this._port  = port;
     this._state = 'starting';
     this._doSpawn();
@@ -114,7 +116,7 @@ class JavaServer extends EventEmitter {
       return;
     }
     const delay = BACKOFF_MS[Math.min(this._crashCount - 1, BACKOFF_MS.length - 1)];
-    setTimeout(() => this._restart(), delay);
+    this._restartTimer = setTimeout(() => this._restart(), delay);
   }
 
   async _restart() {
@@ -125,12 +127,18 @@ class JavaServer extends EventEmitter {
       this._state = 'healthy';
       this.emit('restarted');
       this._resetStabilityTimer();
-    } catch (_) { /* _onExit handles next failure */ }
+    } catch (_) {
+      // Poll timed out — process may have exited already and _onExit already fired.
+      // If state is still 'restarting' (no _onExit yet), reset to 'crashed' so
+      // the next _onExit can trigger another restart attempt.
+      if (this._state === 'restarting') this._state = 'crashed';
+    }
   }
 
   async killServer() {
     this._state = 'idle';
     if (this._stabilityTimer) clearTimeout(this._stabilityTimer);
+    if (this._restartTimer) clearTimeout(this._restartTimer);
     if (!this._process) return;
     return new Promise((resolve) => {
       const timer = setTimeout(() => { this._process.kill('SIGKILL'); resolve(); }, 5000);
