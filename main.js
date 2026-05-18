@@ -1,17 +1,29 @@
+// main.js
 'use strict';
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
-const fs   = require('fs');
+const { JavaServer, findFreePort } = require('./java-server');
 
 let mainWindow = null;
-const watchers  = new Map();
-const debouncers = new Map();
+const server = new JavaServer({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath });
 
 // Extra CLI args: electron <app> [fileA] [fileB]
-// argv[0]=electron, argv[1]=app-path, argv[2..]=user args
 const initFiles = process.argv.slice(2).filter(a => !a.startsWith('--'));
 
-function createMainWindow() {
+function showErrorWindow(message) {
+  const escape = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const win  = new BrowserWindow({ width: 700, height: 500, show: false });
+  const logs = escape(server.getLogs().join('\n'));
+  const html = `<!DOCTYPE html><html><body style="font-family:monospace;padding:20px;background:#1a1a1a;color:#eee">
+    <h2 style="color:#f87171">md-compare failed to start</h2>
+    <p>${escape(message)}</p>
+    <pre style="overflow:auto;background:#111;padding:10px;max-height:350px">${logs}</pre>
+    </body></html>`;
+  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  win.show();
+}
+
+async function createMainWindow(port) {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -22,63 +34,42 @@ function createMainWindow() {
       nodeIntegration: false,
     },
   });
-  mainWindow.loadFile('index.html');
+  await mainWindow.loadURL(`http://127.0.0.1:${port}/`);
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+    mainWindow.webContents.send('init:config', { port });
     if (initFiles.length > 0) {
       mainWindow.webContents.send('init:files', initFiles[0] || null, initFiles[1] || null);
     }
   });
-
-  // Prevent accidental file-drop navigation at the window level
-  mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith('file://') || !url.includes('index.html')) {
-      event.preventDefault();
-    }
-  });
 }
 
-app.whenReady().then(createMainWindow);
+app.whenReady().then(async () => {
+  server.on('fatal', () => showErrorWindow('The md-compare server crashed and could not restart.'));
+  try {
+    const port = await findFreePort();
+    await server.spawnServer(port);
+    await createMainWindow(port);
+  } catch (err) {
+    showErrorWindow(err.message);
+  }
+});
+
+app.on('before-quit', async (event) => {
+  event.preventDefault();
+  await server.killServer();
+  app.exit(0);
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => {
-  for (const w of watchers.values()) { try { w.close(); } catch(_) {} }
-});
-
+// Native file dialog — stays as IPC (can't do this over HTTP)
 ipcMain.handle('dialog:selectFile', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
     filters: [{ name: 'Markdown / Text', extensions: ['md', 'markdown', 'txt'] }],
   });
   return canceled ? null : filePaths[0];
-});
-
-ipcMain.handle('fs:readFile', async (_event, filePath) => {
-  return fs.readFileSync(filePath, 'utf8');
-});
-
-ipcMain.handle('fs:watchFile', (_event, filePath) => {
-  if (watchers.has(filePath)) {
-    try { watchers.get(filePath).close(); } catch(_) {}
-  }
-  const watcher = fs.watch(filePath, () => {
-    // Debounce rapid successive events (common on macOS)
-    clearTimeout(debouncers.get(filePath));
-    debouncers.set(filePath, setTimeout(() => {
-      mainWindow?.webContents.send('file:changed', filePath);
-    }, 120));
-  });
-  watchers.set(filePath, watcher);
-});
-
-ipcMain.handle('fs:unwatchFile', (_event, filePath) => {
-  if (watchers.has(filePath)) {
-    try { watchers.get(filePath).close(); } catch(_) {}
-    watchers.delete(filePath);
-    clearTimeout(debouncers.get(filePath));
-    debouncers.delete(filePath);
-  }
 });

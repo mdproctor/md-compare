@@ -100,8 +100,41 @@ const $ = id => document.getElementById(id);
 // ── State ────────────────────────────────────────────────────────────
 const filePaths = { a: null, b: null };
 const contents  = { a: null, b: null };
+const watchers  = {};                    // path → EventSource
+let API_PORT    = null;
 let syncEnabled = true, syncing = false, dragging = false;
 let lastChunks = [], lastTotalA = 0, lastTotalB = 0;
+
+// ── API helpers ──────────────────────────────────────────────────────
+function apiUrl(path) {
+  return `http://127.0.0.1:${API_PORT}${path}`;
+}
+
+async function fetchFile(filePath) {
+  const res = await fetch(apiUrl(`/api/file?path=${encodeURIComponent(filePath)}`));
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.text();
+}
+
+function watchFile(filePath) {
+  if (watchers[filePath]) watchers[filePath].close();
+  const es = new EventSource(apiUrl(`/api/watch?path=${encodeURIComponent(filePath)}`));
+  es.onmessage = async () => {
+    for (const panel of ['a', 'b']) {
+      if (filePaths[panel] === filePath) {
+        try {
+          const content = await fetchFile(filePath);
+          renderMarkdown(panel, content);
+        } catch (_) {}
+      }
+    }
+  };
+  watchers[filePath] = es;
+}
+
+function unwatchFile(filePath) {
+  if (watchers[filePath]) { watchers[filePath].close(); delete watchers[filePath]; }
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────
 function scrollPercent(el) {
@@ -111,9 +144,6 @@ function scrollPercent(el) {
 function applyPercent(el, pct) {
   const max = el.scrollHeight - el.clientHeight;
   if (max > 0) el.scrollTop = pct * max;
-}
-function basename(p) {
-  return p ? p.replace(/\\/g, '/').split('/').pop() : '';
 }
 
 // ── File loading ─────────────────────────────────────────────────────
@@ -125,184 +155,27 @@ async function selectFile(panel) {
 async function loadFile(panel, path) {
   const prev = filePaths[panel];
   filePaths[panel] = path;
-
-  // Update header
-  const pathEl = $(`path-${panel}`);
-  pathEl.textContent = path;
-  pathEl.classList.add('loaded');
-
-  // Unwatch old path
-  if (prev && prev !== path) window.compare.unwatchFile(prev);
-
-  // Read and render
+  $(`path-${panel}`).textContent = path;
+  $(`path-${panel}`).classList.add('loaded');
+  if (prev && prev !== path) unwatchFile(prev);
   try {
-    const content = await window.compare.readFile(path);
+    const content = await fetchFile(path);
     renderMarkdown(panel, content);
   } catch (err) {
-    $(`render-${panel}`).innerHTML = `<p style="color:var(--error);padding:24px">Could not read file: ${err.message}</p>`;
+    $(`render-${panel}`).innerHTML =
+      `<p style="color:var(--error);padding:24px">Could not read file: ${err.message}</p>`;
   }
-
-  // Watch for changes
-  window.compare.watchFile(path);
+  watchFile(path);
 }
 
 function renderMarkdown(panel, content) {
   contents[panel] = content;
-  const render = $(`render-${panel}`);
-  const empty  = $(`empty-${panel}`);
-  render.innerHTML = marked.parse(content);
-  empty.classList.add('hidden');
+  $(`render-${panel}`).innerHTML = marked.parse(content);
+  $(`empty-${panel}`).classList.add('hidden');
   updateDiffMap();
 }
 
-// ── Diff minimap ─────────────────────────────────────────────────────
-
-// LCS-based line diff. Returns { chunks } where each chunk is:
-//   { op: 'eq'|'del'|'ins'|'mod', aStart, aEnd, bStart, bEnd }
-// 'mod' = adjacent del+ins (lines replaced). aEnd/bEnd are exclusive.
-function lineDiff(textA, textB) {
-  const a = textA.split('\n');
-  const b = textB.split('\n');
-  const m = a.length, n = b.length;
-
-  // DP table: dp[i][j] = LCS length for a[i:] vs b[j:]
-  const dp = Array.from({ length: m + 1 }, () => new Uint32Array(n + 1));
-  for (let i = m - 1; i >= 0; i--) {
-    for (let j = n - 1; j >= 0; j--) {
-      dp[i][j] = a[i] === b[j]
-        ? dp[i+1][j+1] + 1
-        : Math.max(dp[i+1][j], dp[i][j+1]);
-    }
-  }
-
-  // Traceback into raw del/ins/eq chunks
-  const raw = [];
-  let i = 0, j = 0;
-  while (i < m || j < n) {
-    const last = raw[raw.length - 1];
-    if (i < m && j < n && a[i] === b[j]) {
-      if (last?.op === 'eq') { last.aEnd++; last.bEnd++; }
-      else raw.push({ op: 'eq', aStart: i, aEnd: i+1, bStart: j, bEnd: j+1 });
-      i++; j++;
-    } else if (i < m && (j >= n || dp[i+1][j] >= dp[i][j+1])) {
-      if (last?.op === 'del') { last.aEnd++; }
-      else raw.push({ op: 'del', aStart: i, aEnd: i+1, bStart: j, bEnd: j });
-      i++;
-    } else {
-      if (last?.op === 'ins') { last.bEnd++; }
-      else raw.push({ op: 'ins', aStart: i, aEnd: i, bStart: j, bEnd: j+1 });
-      j++;
-    }
-  }
-
-  // Merge adjacent del+ins pairs → 'mod'
-  const chunks = [];
-  for (let k = 0; k < raw.length; k++) {
-    if (raw[k].op === 'del' && raw[k+1]?.op === 'ins') {
-      chunks.push({ op: 'mod', aStart: raw[k].aStart, aEnd: raw[k].aEnd, bStart: raw[k+1].bStart, bEnd: raw[k+1].bEnd });
-      k++;
-    } else {
-      chunks.push(raw[k]);
-    }
-  }
-  return { a, b, chunks };
-}
-
-function drawDiffMap(totalA, totalB, chunks) {
-  const canvas  = $('diff-map');
-  const divider = $('divider');
-  const h = divider.clientHeight;
-  const w = divider.clientWidth;
-  canvas.width  = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  const mid = Math.floor(w / 2);
-
-  ctx.fillStyle = '#ede7d9'; // --chrome
-  ctx.fillRect(0, 0, w, h);
-
-  for (const c of chunks) {
-    if (c.op === 'eq') continue;
-    // Left half always red — A-side content that differs (del or the A half of mod)
-    if (c.op === 'del' || c.op === 'mod') {
-      const y1 = Math.floor((c.aStart / totalA) * h);
-      const y2 = Math.ceil( (c.aEnd   / totalA) * h);
-      ctx.fillStyle = '#ef4444';
-      ctx.fillRect(1, y1, mid - 2, Math.max(2, y2 - y1));
-    }
-    // Right half always green — B-side content that differs (ins or the B half of mod)
-    if (c.op === 'ins' || c.op === 'mod') {
-      const y1 = Math.floor((c.bStart / totalB) * h);
-      const y2 = Math.ceil( (c.bEnd   / totalB) * h);
-      ctx.fillStyle = '#22c55e';
-      ctx.fillRect(mid + 1, y1, w - mid - 2, Math.max(2, y2 - y1));
-    }
-  }
-
-  ctx.fillStyle = '#c8baa0'; // --border centre spine
-  ctx.fillRect(mid, 0, 1, h);
-}
-
-// Map source-line ranges from diff chunks onto rendered block elements.
-// Uses marked.lexer() to measure each token's line span via its .raw text.
-// Panel A elements get .diff-del (red) for del/mod; panel B get .diff-ins (green) for ins/mod.
-function annotateRendered(panel, content, chunks) {
-  const render   = $(`render-${panel}`);
-  const elements = [...render.children];
-  const startKey = panel === 'a' ? 'aStart' : 'bStart';
-  const endKey   = panel === 'a' ? 'aEnd'   : 'bEnd';
-
-  // Clear previous annotations
-  elements.forEach(el => {
-    el.removeAttribute('data-diff-chunk');
-    el.classList.remove('diff-del', 'diff-ins');
-  });
-
-  // Walk tokens (skipping space tokens — they produce no rendered elements)
-  const tokens = marked.lexer(content);
-  let line = 0, elIdx = 0;
-  for (const token of tokens) {
-    const rawLines = token.raw.split('\n').length - 1;
-    const tokenEnd = line + rawLines;
-    if (token.type !== 'space') {
-      const el = elements[elIdx++];
-      if (el) {
-        const ci = chunks.findIndex(c =>
-          c.op !== 'eq' && c[startKey] < tokenEnd && c[endKey] > line
-        );
-        if (ci >= 0) {
-          el.dataset.diffChunk = ci;
-          // A-side: del or the A-half of mod → red; B-side: ins or B-half of mod → green
-          el.classList.add(panel === 'a' ? 'diff-del' : 'diff-ins');
-        }
-      }
-    }
-    line = tokenEnd;
-  }
-}
-
-function updateDiffMap() {
-  if (!contents.a || !contents.b) return;
-  const { a, b, chunks } = lineDiff(contents.a, contents.b);
-  lastChunks = chunks; lastTotalA = a.length; lastTotalB = b.length;
-  drawDiffMap(a.length, b.length, chunks);
-  annotateRendered('a', contents.a, chunks);
-  annotateRendered('b', contents.b, chunks);
-}
-
-// ── File watcher ─────────────────────────────────────────────────────
-window.compare.onFileChanged(async (changedPath) => {
-  for (const panel of ['a', 'b']) {
-    if (filePaths[panel] === changedPath) {
-      try {
-        const content = await window.compare.readFile(changedPath);
-        renderMarkdown(panel, content);
-      } catch (_) {}
-    }
-  }
-});
-
-// ── Scroll sync (percentage-based, both panels are plain divs) ───────
+// ── Scroll sync ──────────────────────────────────────────────────────
 function setupScrollSync() {
   const bodyA = $('body-a'), bodyB = $('body-b');
   bodyA.addEventListener('scroll', () => {
@@ -322,43 +195,143 @@ function setupScrollSync() {
 function toggleSync() {
   syncEnabled = !syncEnabled;
   $('btn-sync').classList.toggle('active', syncEnabled);
-  if (syncEnabled) {
-    // Snap B to match A's current position
-    applyPercent($('body-b'), scrollPercent($('body-a')));
-  }
+  if (syncEnabled) applyPercent($('body-b'), scrollPercent($('body-a')));
 }
 
-// ── Drag divider (adapted from Sparge — no iframe pointer-events needed) ──
+// ── Drag divider ─────────────────────────────────────────────────────
 $('divider').addEventListener('mousedown', () => { dragging = true; });
 document.addEventListener('mousemove', e => {
   if (!dragging) return;
   const r   = $('panels').getBoundingClientRect();
   const pct = Math.max(20, Math.min(80, (e.clientX - r.left) / r.width * 100));
-  const pa  = $('panel-a'), pb = $('panel-b');
+  const pa = $('panel-a'), pb = $('panel-b');
   pa.style.flex = 'none'; pa.style.width = pct + '%';
   pb.style.flex = '1';    pb.style.width = '';
 });
 document.addEventListener('mouseup', () => { dragging = false; });
 
 // ── Drop zones ───────────────────────────────────────────────────────
-// Prevent window-level navigation on accidental drops
 document.addEventListener('dragover', e => e.preventDefault());
 document.addEventListener('drop',     e => e.preventDefault());
 
 function setupDropZone(panel) {
   const body = $(`body-${panel}`);
-  body.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); body.classList.add('drag-over'); });
+  body.addEventListener('dragover', e => {
+    e.preventDefault(); e.stopPropagation(); body.classList.add('drag-over');
+  });
   body.addEventListener('dragleave', () => body.classList.remove('drag-over'));
   body.addEventListener('drop', e => {
     e.preventDefault(); e.stopPropagation();
     body.classList.remove('drag-over');
     const file = e.dataTransfer.files[0];
-    // Electron augments File objects with a .path property
     if (file && file.path) loadFile(panel, file.path);
   });
 }
 
-// ── Critique panel (Phase 2 — toggle stub) ───────────────────────────
+// ── Diff minimap (LCS line diff) ─────────────────────────────────────
+function lineDiff(textA, textB) {
+  const a = textA.split('\n');
+  const b = textB.split('\n');
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Uint32Array(n + 1));
+  for (let i = m - 1; i >= 0; i--)
+    for (let j = n - 1; j >= 0; j--)
+      dp[i][j] = a[i] === b[j] ? dp[i+1][j+1] + 1 : Math.max(dp[i+1][j], dp[i][j+1]);
+
+  const raw = [];
+  let i = 0, j = 0;
+  while (i < m || j < n) {
+    const last = raw[raw.length - 1];
+    if (i < m && j < n && a[i] === b[j]) {
+      if (last?.op === 'eq') { last.aEnd++; last.bEnd++; }
+      else raw.push({ op: 'eq', aStart: i, aEnd: i+1, bStart: j, bEnd: j+1 });
+      i++; j++;
+    } else if (i < m && (j >= n || dp[i+1][j] >= dp[i][j+1])) {
+      if (last?.op === 'del') { last.aEnd++; }
+      else raw.push({ op: 'del', aStart: i, aEnd: i+1, bStart: j, bEnd: j });
+      i++;
+    } else {
+      if (last?.op === 'ins') { last.bEnd++; }
+      else raw.push({ op: 'ins', aStart: i, aEnd: i, bStart: j, bEnd: j+1 });
+      j++;
+    }
+  }
+  const chunks = [];
+  for (let k = 0; k < raw.length; k++) {
+    if (raw[k].op === 'del' && raw[k+1]?.op === 'ins') {
+      chunks.push({ op: 'mod', aStart: raw[k].aStart, aEnd: raw[k].aEnd,
+                               bStart: raw[k+1].bStart, bEnd: raw[k+1].bEnd });
+      k++;
+    } else { chunks.push(raw[k]); }
+  }
+  return { a, b, chunks };
+}
+
+function drawDiffMap(totalA, totalB, chunks) {
+  const canvas  = $('diff-map');
+  const divider = $('divider');
+  const h = divider.clientHeight, w = divider.clientWidth;
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const mid = Math.floor(w / 2);
+  ctx.fillStyle = '#ede7d9'; ctx.fillRect(0, 0, w, h);
+  for (const c of chunks) {
+    if (c.op === 'eq') continue;
+    if (c.op === 'del' || c.op === 'mod') {
+      const y1 = Math.floor((c.aStart / totalA) * h);
+      const y2 = Math.ceil( (c.aEnd   / totalA) * h);
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(1, y1, mid - 2, Math.max(2, y2 - y1));
+    }
+    if (c.op === 'ins' || c.op === 'mod') {
+      const y1 = Math.floor((c.bStart / totalB) * h);
+      const y2 = Math.ceil( (c.bEnd   / totalB) * h);
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(mid + 1, y1, w - mid - 2, Math.max(2, y2 - y1));
+    }
+  }
+  ctx.fillStyle = '#c8baa0'; ctx.fillRect(mid, 0, 1, h);
+}
+
+function annotateRendered(panel, content, chunks) {
+  const render   = $(`render-${panel}`);
+  const elements = [...render.children];
+  const startKey = panel === 'a' ? 'aStart' : 'bStart';
+  const endKey   = panel === 'a' ? 'aEnd'   : 'bEnd';
+  elements.forEach(el => {
+    el.removeAttribute('data-diff-chunk');
+    el.classList.remove('diff-del', 'diff-ins');
+  });
+  const tokens = marked.lexer(content);
+  let line = 0, elIdx = 0;
+  for (const token of tokens) {
+    const rawLines = token.raw.split('\n').length - 1;
+    const tokenEnd = line + rawLines;
+    if (token.type !== 'space') {
+      const el = elements[elIdx++];
+      if (el) {
+        const ci = chunks.findIndex(c =>
+          c.op !== 'eq' && c[startKey] < tokenEnd && c[endKey] > line);
+        if (ci >= 0) {
+          el.dataset.diffChunk = ci;
+          el.classList.add(panel === 'a' ? 'diff-del' : 'diff-ins');
+        }
+      }
+    }
+    line = tokenEnd;
+  }
+}
+
+function updateDiffMap() {
+  if (!contents.a || !contents.b) return;
+  const { a, b, chunks } = lineDiff(contents.a, contents.b);
+  lastChunks = chunks; lastTotalA = a.length; lastTotalB = b.length;
+  drawDiffMap(a.length, b.length, chunks);
+  annotateRendered('a', contents.a, chunks);
+  annotateRendered('b', contents.b, chunks);
+}
+
+// ── Critique panel stub ──────────────────────────────────────────────
 function toggleCritique() {
   $('critique-panel').classList.toggle('hidden');
 }
@@ -370,6 +343,8 @@ document.addEventListener('keydown', e => {
 });
 
 // ── Init ─────────────────────────────────────────────────────────────
+window.compare.onInitConfig(({ port }) => { API_PORT = port; });
+
 window.compare.onInitFiles(async (pathA, pathB) => {
   if (pathA) await loadFile('a', pathA);
   if (pathB) await loadFile('b', pathB);
@@ -381,7 +356,6 @@ document.addEventListener('DOMContentLoaded', () => {
   setupDropZone('b');
   new ResizeObserver(updateDiffMap).observe($('divider'));
 
-  // Click a diff bar segment → scroll both panels to that change
   $('diff-map').addEventListener('click', e => {
     if (!lastChunks.length) return;
     const canvas   = $('diff-map');
@@ -391,15 +365,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const startKey = leftSide ? 'aStart' : 'bStart';
     const endKey   = leftSide ? 'aEnd'   : 'bEnd';
     const clickLine = Math.floor(yFrac * total);
-
     const ci = lastChunks.findIndex(c =>
-      c.op !== 'eq' && c[startKey] <= clickLine && c[endKey] > clickLine
-    );
+      c.op !== 'eq' && c[startKey] <= clickLine && c[endKey] > clickLine);
     if (ci < 0) return;
-
-    // Scroll whichever panel has the annotated element; sync carries the other.
-    // Use scrollBy relative to the panel body — scrollIntoView targets the viewport,
-    // not the overflow container, so upward scrolls silently do nothing.
     for (const p of ['a', 'b']) {
       const el = $(`render-${p}`).querySelector(`[data-diff-chunk="${ci}"]`);
       if (el) {
