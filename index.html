@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>md-compare</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<link rel="stylesheet" href="styles.css">
+<script>
+  // DRL language for hljs (from Sparge)
+  document.addEventListener('DOMContentLoaded', () => {
+    hljs.registerLanguage('drl', h => ({
+      keywords: { keyword: 'rule when then end import package declare salience agenda-group ruleflow-group lock-on-active no-loop accumulate collect from exists forall not and or modify update insert retract delete global eval query function' },
+      contains: [h.C_LINE_COMMENT_MODE, h.C_BLOCK_COMMENT_MODE, h.QUOTE_STRING_MODE, h.C_NUMBER_MODE]
+    }));
+    // Use renderer (not extensions) to override built-in code blocks.
+    // extensions:[{name:'code'}] targets custom token types only and does NOT
+    // override the built-in 'code' renderer in marked.js v9 — it is silently ignored.
+    marked.use({ renderer: { code(code, lang) {
+      const language = lang && hljs.getLanguage(lang) ? lang : null;
+      const hi = language ? hljs.highlight(code, { language, ignoreIllegals: true }).value
+                          : (code ? hljs.highlightAuto(code).value : code);
+      return `<pre><code class="hljs${language ? ` language-${language}` : ''}">${hi}</code></pre>\n`;
+    }}});
+  });
+</script>
+</head>
+<body>
+
+<!-- ── Top bar ── -->
+<div id="topbar">
+  <div id="logo">md-compare</div>
+  <div class="sep"></div>
+  <button id="btn-sync" class="active" onclick="toggleSync()" title="Sync scroll between panels">⟺ Sync</button>
+  <div id="topbar-spacer"></div>
+  <!-- Phase 2: critique toggle button lives here -->
+  <button id="btn-critique" onclick="toggleCritique()" title="Open critique panel (Phase 2)" style="opacity:.4" disabled>✦ Critique</button>
+</div>
+
+<!-- ── Main area ── -->
+<div id="main">
+  <div id="panels">
+
+    <!-- Panel A -->
+    <div class="panel" id="panel-a">
+      <div class="panel-header">
+        <input class="panel-label" id="label-a" value="File A" title="Click to rename">
+        <span class="panel-path" id="path-a">No file selected</span>
+        <button onclick="selectFile('a')">Choose…</button>
+      </div>
+      <div class="panel-body" id="body-a">
+        <div class="panel-empty" id="empty-a">
+          <div class="panel-empty-icon">📄</div>
+          <div class="panel-empty-hint">Drop a .md file here<br>or click Choose…</div>
+        </div>
+        <div class="md-wrap" id="render-a"></div>
+      </div>
+    </div>
+
+    <!-- Drag divider + diff minimap -->
+    <div id="divider"><canvas id="diff-map"></canvas></div>
+
+    <!-- Panel B -->
+    <div class="panel" id="panel-b">
+      <div class="panel-header">
+        <input class="panel-label" id="label-b" value="File B" title="Click to rename">
+        <span class="panel-path" id="path-b">No file selected</span>
+        <button onclick="selectFile('b')">Choose…</button>
+      </div>
+      <div class="panel-body" id="body-b">
+        <div class="panel-empty" id="empty-b">
+          <div class="panel-empty-icon">📄</div>
+          <div class="panel-empty-hint">Drop a .md file here<br>or click Choose…</div>
+        </div>
+        <div class="md-wrap" id="render-b"></div>
+      </div>
+    </div>
+
+    <!-- ── Critique panel (Phase 2 — ships empty) ── -->
+    <div id="critique-panel" class="hidden">
+      <div id="critique-hdr">
+        <span>Critique</span>
+        <button onclick="toggleCritique()">✕</button>
+      </div>
+      <div id="critique-body">
+        <!-- Phase 2: LLM critique displayed here as readable prose -->
+        Critique panel — Phase 2
+      </div>
+    </div>
+
+  </div><!-- #panels -->
+</div><!-- #main -->
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+
+// ── State ────────────────────────────────────────────────────────────
+const filePaths = { a: null, b: null };
+const contents  = { a: null, b: null };
+let syncEnabled = true, syncing = false, dragging = false;
+let lastChunks = [], lastTotalA = 0, lastTotalB = 0;
+
+// ── Helpers ──────────────────────────────────────────────────────────
+function scrollPercent(el) {
+  const max = el.scrollHeight - el.clientHeight;
+  return max <= 0 ? 0 : Math.min(1, el.scrollTop / max);
+}
+function applyPercent(el, pct) {
+  const max = el.scrollHeight - el.clientHeight;
+  if (max > 0) el.scrollTop = pct * max;
+}
+function basename(p) {
+  return p ? p.replace(/\\/g, '/').split('/').pop() : '';
+}
+
+// ── File loading ─────────────────────────────────────────────────────
+async function selectFile(panel) {
+  const path = await window.compare.selectFile();
+  if (path) await loadFile(panel, path);
+}
+
+async function loadFile(panel, path) {
+  const prev = filePaths[panel];
+  filePaths[panel] = path;
+
+  // Update header
+  const pathEl = $(`path-${panel}`);
+  pathEl.textContent = path;
+  pathEl.classList.add('loaded');
+
+  // Unwatch old path
+  if (prev && prev !== path) window.compare.unwatchFile(prev);
+
+  // Read and render
+  try {
+    const content = await window.compare.readFile(path);
+    renderMarkdown(panel, content);
+  } catch (err) {
+    $(`render-${panel}`).innerHTML = `<p style="color:var(--error);padding:24px">Could not read file: ${err.message}</p>`;
+  }
+
+  // Watch for changes
+  window.compare.watchFile(path);
+}
+
+function renderMarkdown(panel, content) {
+  contents[panel] = content;
+  const render = $(`render-${panel}`);
+  const empty  = $(`empty-${panel}`);
+  render.innerHTML = marked.parse(content);
+  empty.classList.add('hidden');
+  updateDiffMap();
+}
+
+// ── Diff minimap ─────────────────────────────────────────────────────
+
+// LCS-based line diff. Returns { chunks } where each chunk is:
+//   { op: 'eq'|'del'|'ins'|'mod', aStart, aEnd, bStart, bEnd }
+// 'mod' = adjacent del+ins (lines replaced). aEnd/bEnd are exclusive.
+function lineDiff(textA, textB) {
+  const a = textA.split('\n');
+  const b = textB.split('\n');
+  const m = a.length, n = b.length;
+
+  // DP table: dp[i][j] = LCS length for a[i:] vs b[j:]
+  const dp = Array.from({ length: m + 1 }, () => new Uint32Array(n + 1));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j]
+        ? dp[i+1][j+1] + 1
+        : Math.max(dp[i+1][j], dp[i][j+1]);
+    }
+  }
+
+  // Traceback into raw del/ins/eq chunks
+  const raw = [];
+  let i = 0, j = 0;
+  while (i < m || j < n) {
+    const last = raw[raw.length - 1];
+    if (i < m && j < n && a[i] === b[j]) {
+      if (last?.op === 'eq') { last.aEnd++; last.bEnd++; }
+      else raw.push({ op: 'eq', aStart: i, aEnd: i+1, bStart: j, bEnd: j+1 });
+      i++; j++;
+    } else if (i < m && (j >= n || dp[i+1][j] >= dp[i][j+1])) {
+      if (last?.op === 'del') { last.aEnd++; }
+      else raw.push({ op: 'del', aStart: i, aEnd: i+1, bStart: j, bEnd: j });
+      i++;
+    } else {
+      if (last?.op === 'ins') { last.bEnd++; }
+      else raw.push({ op: 'ins', aStart: i, aEnd: i, bStart: j, bEnd: j+1 });
+      j++;
+    }
+  }
+
+  // Merge adjacent del+ins pairs → 'mod'
+  const chunks = [];
+  for (let k = 0; k < raw.length; k++) {
+    if (raw[k].op === 'del' && raw[k+1]?.op === 'ins') {
+      chunks.push({ op: 'mod', aStart: raw[k].aStart, aEnd: raw[k].aEnd, bStart: raw[k+1].bStart, bEnd: raw[k+1].bEnd });
+      k++;
+    } else {
+      chunks.push(raw[k]);
+    }
+  }
+  return { a, b, chunks };
+}
+
+function drawDiffMap(totalA, totalB, chunks) {
+  const canvas  = $('diff-map');
+  const divider = $('divider');
+  const h = divider.clientHeight;
+  const w = divider.clientWidth;
+  canvas.width  = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const mid = Math.floor(w / 2);
+
+  ctx.fillStyle = '#ede7d9'; // --chrome
+  ctx.fillRect(0, 0, w, h);
+
+  for (const c of chunks) {
+    if (c.op === 'eq') continue;
+    // Left half always red — A-side content that differs (del or the A half of mod)
+    if (c.op === 'del' || c.op === 'mod') {
+      const y1 = Math.floor((c.aStart / totalA) * h);
+      const y2 = Math.ceil( (c.aEnd   / totalA) * h);
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(1, y1, mid - 2, Math.max(2, y2 - y1));
+    }
+    // Right half always green — B-side content that differs (ins or the B half of mod)
+    if (c.op === 'ins' || c.op === 'mod') {
+      const y1 = Math.floor((c.bStart / totalB) * h);
+      const y2 = Math.ceil( (c.bEnd   / totalB) * h);
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(mid + 1, y1, w - mid - 2, Math.max(2, y2 - y1));
+    }
+  }
+
+  ctx.fillStyle = '#c8baa0'; // --border centre spine
+  ctx.fillRect(mid, 0, 1, h);
+}
+
+// Map source-line ranges from diff chunks onto rendered block elements.
+// Uses marked.lexer() to measure each token's line span via its .raw text.
+// Panel A elements get .diff-del (red) for del/mod; panel B get .diff-ins (green) for ins/mod.
+function annotateRendered(panel, content, chunks) {
+  const render   = $(`render-${panel}`);
+  const elements = [...render.children];
+  const startKey = panel === 'a' ? 'aStart' : 'bStart';
+  const endKey   = panel === 'a' ? 'aEnd'   : 'bEnd';
+
+  // Clear previous annotations
+  elements.forEach(el => {
+    el.removeAttribute('data-diff-chunk');
+    el.classList.remove('diff-del', 'diff-ins');
+  });
+
+  // Walk tokens (skipping space tokens — they produce no rendered elements)
+  const tokens = marked.lexer(content);
+  let line = 0, elIdx = 0;
+  for (const token of tokens) {
+    const rawLines = token.raw.split('\n').length - 1;
+    const tokenEnd = line + rawLines;
+    if (token.type !== 'space') {
+      const el = elements[elIdx++];
+      if (el) {
+        const ci = chunks.findIndex(c =>
+          c.op !== 'eq' && c[startKey] < tokenEnd && c[endKey] > line
+        );
+        if (ci >= 0) {
+          el.dataset.diffChunk = ci;
+          // A-side: del or the A-half of mod → red; B-side: ins or B-half of mod → green
+          el.classList.add(panel === 'a' ? 'diff-del' : 'diff-ins');
+        }
+      }
+    }
+    line = tokenEnd;
+  }
+}
+
+function updateDiffMap() {
+  if (!contents.a || !contents.b) return;
+  const { a, b, chunks } = lineDiff(contents.a, contents.b);
+  lastChunks = chunks; lastTotalA = a.length; lastTotalB = b.length;
+  drawDiffMap(a.length, b.length, chunks);
+  annotateRendered('a', contents.a, chunks);
+  annotateRendered('b', contents.b, chunks);
+}
+
+// ── File watcher ─────────────────────────────────────────────────────
+window.compare.onFileChanged(async (changedPath) => {
+  for (const panel of ['a', 'b']) {
+    if (filePaths[panel] === changedPath) {
+      try {
+        const content = await window.compare.readFile(changedPath);
+        renderMarkdown(panel, content);
+      } catch (_) {}
+    }
+  }
+});
+
+// ── Scroll sync (percentage-based, both panels are plain divs) ───────
+function setupScrollSync() {
+  const bodyA = $('body-a'), bodyB = $('body-b');
+  bodyA.addEventListener('scroll', () => {
+    if (!syncEnabled || syncing) return;
+    syncing = true;
+    applyPercent(bodyB, scrollPercent(bodyA));
+    requestAnimationFrame(() => requestAnimationFrame(() => { syncing = false; }));
+  }, { passive: true });
+  bodyB.addEventListener('scroll', () => {
+    if (!syncEnabled || syncing) return;
+    syncing = true;
+    applyPercent(bodyA, scrollPercent(bodyB));
+    requestAnimationFrame(() => requestAnimationFrame(() => { syncing = false; }));
+  }, { passive: true });
+}
+
+function toggleSync() {
+  syncEnabled = !syncEnabled;
+  $('btn-sync').classList.toggle('active', syncEnabled);
+  if (syncEnabled) {
+    // Snap B to match A's current position
+    applyPercent($('body-b'), scrollPercent($('body-a')));
+  }
+}
+
+// ── Drag divider (adapted from Sparge — no iframe pointer-events needed) ──
+$('divider').addEventListener('mousedown', () => { dragging = true; });
+document.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const r   = $('panels').getBoundingClientRect();
+  const pct = Math.max(20, Math.min(80, (e.clientX - r.left) / r.width * 100));
+  const pa  = $('panel-a'), pb = $('panel-b');
+  pa.style.flex = 'none'; pa.style.width = pct + '%';
+  pb.style.flex = '1';    pb.style.width = '';
+});
+document.addEventListener('mouseup', () => { dragging = false; });
+
+// ── Drop zones ───────────────────────────────────────────────────────
+// Prevent window-level navigation on accidental drops
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop',     e => e.preventDefault());
+
+function setupDropZone(panel) {
+  const body = $(`body-${panel}`);
+  body.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); body.classList.add('drag-over'); });
+  body.addEventListener('dragleave', () => body.classList.remove('drag-over'));
+  body.addEventListener('drop', e => {
+    e.preventDefault(); e.stopPropagation();
+    body.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    // Electron augments File objects with a .path property
+    if (file && file.path) loadFile(panel, file.path);
+  });
+}
+
+// ── Critique panel (Phase 2 — toggle stub) ───────────────────────────
+function toggleCritique() {
+  $('critique-panel').classList.toggle('hidden');
+}
+
+// ── Keyboard shortcuts ───────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 's' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); toggleSync(); }
+});
+
+// ── Init ─────────────────────────────────────────────────────────────
+window.compare.onInitFiles(async (pathA, pathB) => {
+  if (pathA) await loadFile('a', pathA);
+  if (pathB) await loadFile('b', pathB);
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  setupScrollSync();
+  setupDropZone('a');
+  setupDropZone('b');
+  new ResizeObserver(updateDiffMap).observe($('divider'));
+
+  // Click a diff bar segment → scroll both panels to that change
+  $('diff-map').addEventListener('click', e => {
+    if (!lastChunks.length) return;
+    const canvas   = $('diff-map');
+    const yFrac    = e.offsetY / canvas.height;
+    const leftSide = e.offsetX < canvas.width / 2;
+    const total    = leftSide ? lastTotalA : lastTotalB;
+    const startKey = leftSide ? 'aStart' : 'bStart';
+    const endKey   = leftSide ? 'aEnd'   : 'bEnd';
+    const clickLine = Math.floor(yFrac * total);
+
+    const ci = lastChunks.findIndex(c =>
+      c.op !== 'eq' && c[startKey] <= clickLine && c[endKey] > clickLine
+    );
+    if (ci < 0) return;
+
+    // Scroll whichever panel has the annotated element; sync carries the other.
+    // Use scrollBy relative to the panel body — scrollIntoView targets the viewport,
+    // not the overflow container, so upward scrolls silently do nothing.
+    for (const p of ['a', 'b']) {
+      const el = $(`render-${p}`).querySelector(`[data-diff-chunk="${ci}"]`);
+      if (el) {
+        const body = $(`body-${p}`);
+        const relTop = el.getBoundingClientRect().top - body.getBoundingClientRect().top;
+        body.scrollBy({ top: relTop - 24, behavior: 'smooth' });
+        break;
+      }
+    }
+  });
+});
+</script>
+</body>
+</html>
