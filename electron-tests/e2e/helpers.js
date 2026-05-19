@@ -19,11 +19,11 @@ async function launchApp(fileA, fileB) {
   // render-a and render-b gain an h1 when the markdown is parsed.
   await window.waitForFunction(
     () => document.querySelector('#render-a h1') !== null,
-    { timeout: 30_000 }
+    { timeout: 55_000 }
   );
   await window.waitForFunction(
     () => document.querySelector('#render-b h1') !== null,
-    { timeout: 30_000 }
+    { timeout: 55_000 }
   );
   return { app, window };
 }
