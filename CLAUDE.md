@@ -110,6 +110,38 @@ Electron (renderer: index.html)
 
 See `docs/FEATURES.md` for the backlog of planned features.
 
+## Work Tracking
+
+**Issue tracking: enabled**
+**GitHub repo:** `mdproctor/md-compare`
+
+### Automatic behaviours
+
+- **Before implementing anything:** check for an open issue; create one if none exists (Phase 2)
+- **Before a multi-task session:** create an epic + child issues before writing code (Phase 1)
+- **At every commit:** confirm issue linkage (`Refs #N` or `Closes #N`) in the commit message (Phase 3)
+
+### Labels in use
+
+| Label | Meaning |
+|---|---|
+| `epic` | Multi-issue body of work |
+| `enhancement` | New feature or capability |
+| `bug` | Something broken |
+| `refactor` | Code restructuring, no behaviour change |
+| `test` | Test coverage additions or fixes |
+| `chore` | Tooling, config, maintenance |
+| `documentation` | Docs additions or corrections |
+
+### Commit footer format
+
+```
+Refs #N      ← work in progress, issue stays open
+Closes #N    ← this commit completes the issue
+```
+
+Use `no-issue: <reason>` for commits that genuinely don't need an issue (e.g. typo fix, .gitignore update).
+
 ## What NOT to do
 
 - Do not edit `node_modules/` directly — it's Sparge's modules
