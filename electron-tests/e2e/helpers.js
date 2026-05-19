@@ -15,8 +15,16 @@ async function launchApp(fileA, fileB) {
   if (fileB) args.push(fileB);
   const app    = await electron.launch({ executablePath: ELECTRON_BIN, args });
   const window = await app.firstWindow();
-  // Wait for the Quarkus server to start and files to load (up to 30s)
-  await window.waitForSelector('#render-a .md-wrap, #render-a p, #empty-a', { timeout: 30_000 });
+  // Wait for both panels to render their content.
+  // render-a and render-b gain an h1 when the markdown is parsed.
+  await window.waitForFunction(
+    () => document.querySelector('#render-a h1') !== null,
+    { timeout: 30_000 }
+  );
+  await window.waitForFunction(
+    () => document.querySelector('#render-b h1') !== null,
+    { timeout: 30_000 }
+  );
   return { app, window };
 }
 

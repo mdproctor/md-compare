@@ -8,7 +8,11 @@ let mainWindow = null;
 const server = new JavaServer({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath });
 
 // Extra CLI args: electron <app> [fileA] [fileB]
-const initFiles = process.argv.slice(2).filter(a => !a.startsWith('--'));
+// Filter out Electron/Chromium flags (--*) and the app directory itself, which
+// Playwright may leave in argv when it fails to splice its debug flags cleanly.
+const initFiles = process.argv.slice(2).filter(
+  a => !a.startsWith('--') && a !== __dirname
+);
 
 function showErrorWindow(message) {
   const escape = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
