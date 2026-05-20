@@ -98,10 +98,16 @@
 const $ = id => document.getElementById(id);
 
 // ── State ────────────────────────────────────────────────────────────
-const filePaths = { a: null, b: null };
-const contents  = { a: null, b: null };
-const watchers    = {};   // path → EventSource
-const watcherRefs = {};   // path → Set of panels currently watching it
+const panels = {
+  a: { path: null, content: null, label: 'File A' },
+  b: { path: null, content: null, label: 'File B' }
+};
+const watchers = {};   // path → EventSource
+
+function panelsWatching(path) {
+  return ['a', 'b'].filter(p => panels[p].path === path);
+}
+
 let API_PORT    = null;
 let syncEnabled = true, syncing = false, dragging = false;
 let lastChunks = [], lastTotalA = 0, lastTotalB = 0;
@@ -118,30 +124,37 @@ async function fetchFile(filePath) {
 }
 
 function watchFile(panel, filePath) {
-  if (!watcherRefs[filePath]) watcherRefs[filePath] = new Set();
-  watcherRefs[filePath].add(panel);
-  if (watchers[filePath]) return; // already watching, just added the ref
+  if (watchers[filePath]) return; // EventSource already open
   const es = new EventSource(apiUrl(`/api/watch?path=${encodeURIComponent(filePath)}`));
   es.onmessage = async () => {
-    for (const p of ['a', 'b']) {
-      if (filePaths[p] === filePath) {
-        try {
-          const content = await fetchFile(filePath);
-          renderMarkdown(p, content);
-        } catch (_) {}
-      }
+    for (const p of panelsWatching(filePath)) {
+      try {
+        const content = await fetchFile(filePath);
+        renderMarkdown(p, content);
+      } catch (_) {}
     }
   };
   watchers[filePath] = es;
 }
 
-function unwatchFile(panel, filePath) {
-  if (watcherRefs[filePath]) {
-    watcherRefs[filePath].delete(panel);
-    if (watcherRefs[filePath].size === 0) {
-      if (watchers[filePath]) { watchers[filePath].close(); delete watchers[filePath]; }
-      delete watcherRefs[filePath];
-    }
+function unwatchFile(filePath) {
+  if (panelsWatching(filePath).length === 0 && watchers[filePath]) {
+    watchers[filePath].close();
+    delete watchers[filePath];
+  }
+}
+
+function syncPanelDOM(panel) {
+  const s = panels[panel];
+  $(`label-${panel}`).value = s.label;
+  $(`path-${panel}`).textContent = s.path || 'No file selected';
+  $(`path-${panel}`).classList.toggle('loaded', !!s.path);
+  if (s.content) {
+    $(`render-${panel}`).innerHTML = marked.parse(s.content);
+    $(`empty-${panel}`).classList.add('hidden');
+  } else {
+    $(`render-${panel}`).innerHTML = '';
+    $(`empty-${panel}`).classList.remove('hidden');
   }
 }
 
@@ -162,11 +175,12 @@ async function selectFile(panel) {
 }
 
 async function loadFile(panel, path) {
-  const prev = filePaths[panel];
-  filePaths[panel] = path;
+  const prev = panels[panel].path;
+  panels[panel].path = path;
+  panels[panel].label = path.split('/').pop();
   $(`path-${panel}`).textContent = path;
   $(`path-${panel}`).classList.add('loaded');
-  if (prev && prev !== path) unwatchFile(panel, prev);
+  if (prev && prev !== path) unwatchFile(prev);
   try {
     const content = await fetchFile(path);
     renderMarkdown(panel, content);
@@ -175,12 +189,14 @@ async function loadFile(panel, path) {
       `<p style="color:var(--error);padding:24px">Could not read file: ${err.message}</p>`;
   }
   watchFile(panel, path);
+  updateSwapButton();
 }
 
+function updateSwapButton() { /* filled in Task 3 */ }
+
 function renderMarkdown(panel, content) {
-  contents[panel] = content;
-  $(`render-${panel}`).innerHTML = marked.parse(content);
-  $(`empty-${panel}`).classList.add('hidden');
+  panels[panel].content = content;
+  syncPanelDOM(panel);
   updateDiffMap();
 }
 
@@ -332,12 +348,12 @@ function annotateRendered(panel, content, chunks) {
 }
 
 function updateDiffMap() {
-  if (!contents.a || !contents.b) return;
-  const { a, b, chunks } = lineDiff(contents.a, contents.b);
+  if (!panels.a.content || !panels.b.content) return;
+  const { a, b, chunks } = lineDiff(panels.a.content, panels.b.content);
   lastChunks = chunks; lastTotalA = a.length; lastTotalB = b.length;
   drawDiffMap(a.length, b.length, chunks);
-  annotateRendered('a', contents.a, chunks);
-  annotateRendered('b', contents.b, chunks);
+  annotateRendered('a', panels.a.content, chunks);
+  annotateRendered('b', panels.b.content, chunks);
 }
 
 // ── Critique panel stub ──────────────────────────────────────────────
@@ -374,6 +390,9 @@ document.addEventListener('DOMContentLoaded', () => {
   setupScrollSync();
   setupDropZone('a');
   setupDropZone('b');
+  ['a', 'b'].forEach(p =>
+    $(`label-${p}`).addEventListener('input',
+      () => { panels[p].label = $(`label-${p}`).value; }));
   new ResizeObserver(updateDiffMap).observe($('divider'));
 
   $('diff-map').addEventListener('click', e => {
