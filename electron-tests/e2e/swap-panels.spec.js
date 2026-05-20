@@ -45,7 +45,7 @@ test.describe('swap panels — both files loaded', () => {
 
   test('diff markers remain present on both sides after swap', async () => {
     await window.locator('#btn-swap').click();
-    await window.waitForFunction(() => document.querySelector('[data-diff-chunk]') !== null, { timeout: 5000 });
+    await window.waitForFunction(() => document.querySelector('[data-diff-chunk]') !== null, undefined, { timeout: 5000 });
     expect(await window.locator('#render-a .diff-del').count()).toBeGreaterThan(0);
     expect(await window.locator('#render-b .diff-ins').count()).toBeGreaterThan(0);
     await window.locator('#btn-swap').click(); // restore
@@ -59,6 +59,7 @@ test.describe('swap panels — both files loaded', () => {
     await window.locator('#btn-swap').click();
     await window.waitForFunction(
       () => document.getElementById('body-a').scrollTop === 0,
+      undefined,
       { timeout: 5000 }
     );
     const scrollA = await window.evaluate(() => document.getElementById('body-a').scrollTop);
