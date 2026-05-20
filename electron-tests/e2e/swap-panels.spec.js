@@ -68,20 +68,14 @@ test.describe('swap panels — both files loaded', () => {
     expect(scrollB).toBe(0);
     await window.locator('#btn-swap').click(); // restore
   });
-});
 
-// ── One file loaded ──────────────────────────────────────────────────────────
-
-test.describe('swap panels — single file loaded', () => {
-  let app, window;
-
-  test.beforeAll(async () => {
-    ({ app, window } = await launchApp(process.env.TEST_FILE_A));
-  });
-
-  test.afterAll(async () => { if (app) await app.close(); });
-
-  test('swap button is disabled when only one panel is loaded', async () => {
+  test('swap button is disabled when a panel path is cleared', async () => {
+    // Test the disabled state without spawning a second JVM — clear panel A's path
+    // programmatically, verify button disables, then restore.
+    const savedPath = await window.evaluate(() => panels.a.path);
+    await window.evaluate(() => { panels.a.path = null; updateSwapButton(); });
     await expect(window.locator('#btn-swap')).toBeDisabled();
+    await window.evaluate(path => { panels.a.path = path; updateSwapButton(); }, savedPath);
+    await expect(window.locator('#btn-swap')).toBeEnabled();
   });
 });

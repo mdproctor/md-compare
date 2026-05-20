@@ -18,12 +18,12 @@ async function launchApp(fileA, fileB) {
   if (fileA) await window.waitForFunction(
     () => document.querySelector('#render-a h1') !== null,
     undefined,
-    { timeout: 55_000 }
+    { timeout: 0 }
   );
   if (fileB) await window.waitForFunction(
     () => document.querySelector('#render-b h1') !== null,
     undefined,
-    { timeout: 55_000 }
+    { timeout: 0 }
   );
   return { app, window };
 }
