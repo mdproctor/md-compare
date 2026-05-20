@@ -15,14 +15,16 @@ Planned and completed features for md-compare.
 - [x] Live file watch (SSE EventSource, ref-counted per path)
 - [x] Quarkus backend (FileResource, WatchResource, UiResource, CritiqueResource stub)
 - [x] `java-server.js` process manager with crash recovery
-- [x] Playwright E2E tests: happy path (8) + regression (4)
+- [x] Playwright E2E tests: happy path (8) + regression (4) + swap panels (7)
 - [x] Phase 2 critique panel placeholder (layout ready, content empty)
+
+## Done — recent
+
+- [x] **Swap panels (A↔B)** — ⇄ button in topbar swaps paths, content, and labels atomically; disabled until both panels loaded
 
 ## Planned
 
 ### Diff viewer completeness
-
-- [ ] **Swap panels (A↔B)** — flip diff direction without re-selecting files; button in topbar
 - [ ] **Next/prev diff navigation** — ↑↓ buttons + keyboard (`n`/`p`) to jump between changed blocks
 - [ ] **Diff summary** — topbar count: "5 changes (2 ▲ 3 ▼)" so orientation is instant
 - [ ] **Diff legend** — small colour key (red = A only, green = B only) somewhere unobtrusive

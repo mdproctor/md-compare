@@ -45,7 +45,7 @@ cd server && /opt/homebrew/bin/mvn package -DskipTests
 cd server && /opt/homebrew/bin/mvn test
 ```
 
-**Playwright E2E tests (10 passing, 2 intentionally skipped):**
+**Playwright E2E tests (17 passing, 2 intentionally skipped):**
 ```bash
 ./node_modules/.bin/playwright test --reporter=list
 ```
