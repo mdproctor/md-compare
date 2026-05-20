@@ -15,13 +15,11 @@ async function launchApp(fileA, fileB) {
   if (fileB) args.push(fileB);
   const app    = await electron.launch({ executablePath: ELECTRON_BIN, args });
   const window = await app.firstWindow();
-  // Wait for both panels to render their content.
-  // render-a and render-b gain an h1 when the markdown is parsed.
-  await window.waitForFunction(
+  if (fileA) await window.waitForFunction(
     () => document.querySelector('#render-a h1') !== null,
     { timeout: 55_000 }
   );
-  await window.waitForFunction(
+  if (fileB) await window.waitForFunction(
     () => document.querySelector('#render-b h1') !== null,
     { timeout: 55_000 }
   );

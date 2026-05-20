@@ -1,29 +1,7 @@
 // electron-tests/e2e/swap-panels.spec.js
 'use strict';
 const { test, expect } = require('@playwright/test');
-const { _electron: electron } = require('playwright');
-const path = require('path');
-
-const ELECTRON_BIN = process.env.ELECTRON_BIN ||
-  '/Users/mdproctor/claude/sparge/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron';
-const APP_PATH = path.join(__dirname, '..', '..');
-
-// Launch with both files — waits for both panels to render an h1
-async function launchBothFiles(fileA, fileB) {
-  const app = await electron.launch({ executablePath: ELECTRON_BIN, args: [APP_PATH, fileA, fileB] });
-  const window = await app.firstWindow();
-  await window.waitForFunction(() => document.querySelector('#render-a h1') !== null, { timeout: 55_000 });
-  await window.waitForFunction(() => document.querySelector('#render-b h1') !== null, { timeout: 55_000 });
-  return { app, window };
-}
-
-// Launch with one file — waits for panel A only
-async function launchOneFile(fileA) {
-  const app = await electron.launch({ executablePath: ELECTRON_BIN, args: [APP_PATH, fileA] });
-  const window = await app.firstWindow();
-  await window.waitForFunction(() => document.querySelector('#render-a h1') !== null, { timeout: 55_000 });
-  return { app, window };
-}
+const { launchApp }    = require('./helpers');
 
 // ── Both files loaded ────────────────────────────────────────────────────────
 
@@ -31,7 +9,7 @@ test.describe('swap panels — both files loaded', () => {
   let app, window, originalPathA, originalPathB;
 
   test.beforeAll(async () => {
-    ({ app, window } = await launchBothFiles(process.env.TEST_FILE_A, process.env.TEST_FILE_B));
+    ({ app, window } = await launchApp(process.env.TEST_FILE_A, process.env.TEST_FILE_B));
     originalPathA = await window.locator('#path-a').textContent();
     originalPathB = await window.locator('#path-b').textContent();
   });
@@ -61,12 +39,13 @@ test.describe('swap panels — both files loaded', () => {
     await window.locator('#label-a').fill('My Draft');
     await window.locator('#btn-swap').click();
     await expect(window.locator('#label-b')).toHaveValue('My Draft');
-    await window.locator('#btn-swap').click(); // restore
-    await window.locator('#label-a').fill(originalLabel); // restore label
+    await window.locator('#btn-swap').click(); // restore — label returns to panel A with content
+    await expect(window.locator('#label-a')).toHaveValue('My Draft'); // verify round-trip
   });
 
   test('diff markers remain present on both sides after swap', async () => {
     await window.locator('#btn-swap').click();
+    await window.waitForFunction(() => document.querySelector('[data-diff-chunk]') !== null, { timeout: 5000 });
     expect(await window.locator('#render-a .diff-del').count()).toBeGreaterThan(0);
     expect(await window.locator('#render-b .diff-ins').count()).toBeGreaterThan(0);
     await window.locator('#btn-swap').click(); // restore
@@ -78,6 +57,10 @@ test.describe('swap panels — both files loaded', () => {
       document.getElementById('body-b').scrollTop = 200;
     });
     await window.locator('#btn-swap').click();
+    await window.waitForFunction(
+      () => document.getElementById('body-a').scrollTop === 0,
+      { timeout: 5000 }
+    );
     const scrollA = await window.evaluate(() => document.getElementById('body-a').scrollTop);
     const scrollB = await window.evaluate(() => document.getElementById('body-b').scrollTop);
     expect(scrollA).toBe(0);
@@ -92,7 +75,7 @@ test.describe('swap panels — single file loaded', () => {
   let app, window;
 
   test.beforeAll(async () => {
-    ({ app, window } = await launchOneFile(process.env.TEST_FILE_A));
+    ({ app, window } = await launchApp(process.env.TEST_FILE_A));
   });
 
   test.afterAll(async () => { if (app) await app.close(); });
