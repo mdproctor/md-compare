@@ -34,6 +34,7 @@
   <div id="logo">md-compare</div>
   <div class="sep"></div>
   <button id="btn-sync" class="active" onclick="toggleSync()" title="Sync scroll between panels">⟺ Sync</button>
+  <button id="btn-swap" onclick="swapPanels()" title="Swap panels A↔B" disabled style="opacity:.4">⇄ Swap</button>
   <div id="topbar-spacer"></div>
   <!-- Phase 2: critique toggle button lives here -->
   <button id="btn-critique" onclick="toggleCritique()" title="Open critique panel (Phase 2)" style="opacity:.4" disabled>✦ Critique</button>
@@ -193,7 +194,21 @@ async function loadFile(panel, path) {
   updateSwapButton();
 }
 
-function updateSwapButton() { /* filled in Task 3 */ }
+function updateSwapButton() {
+  const enabled = !!(panels.a.path && panels.b.path);
+  $('btn-swap').disabled = !enabled;
+  $('btn-swap').style.opacity = enabled ? '' : '0.4';
+}
+
+function swapPanels() {
+  if (!panels.a.path || !panels.b.path) return;
+  [panels.a, panels.b] = [panels.b, panels.a];
+  syncPanelDOM('a');
+  syncPanelDOM('b');
+  $('body-a').scrollTop = 0;
+  $('body-b').scrollTop = 0;
+  updateDiffMap();
+}
 
 function renderMarkdown(panel, content) {
   panels[panel].content = content;
