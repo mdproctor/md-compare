@@ -45,7 +45,7 @@ cd server && /opt/homebrew/bin/mvn package -DskipTests
 cd server && /opt/homebrew/bin/mvn test
 ```
 
-**Playwright E2E tests (17 passing, 2 intentionally skipped):**
+**Playwright E2E tests (24 passing, 2 intentionally skipped):**
 ```bash
 ./node_modules/.bin/playwright test --reporter=list
 ```
@@ -94,6 +94,8 @@ Electron (renderer: index.html)
   ├── panels { a, b } object       ← single source of truth: path, content, label per panel
   ├── syncPanelDOM()               ← renders panels[x] state to DOM
   ├── swapPanels()                 ← swaps A↔B atomically (paths, content, labels)
+  ├── nextDiff() / prevDiff()      ← n/p keyboard + ↑↓ buttons; viewport-recalibrating nav
+  ├── scrollToChunk(ci)            ← scrolls both panels to annotated diff element
   ├── LCS line diff                ← compare A and B
   ├── Canvas minimap               ← red=A-side changes, green=B-side changes
   └── annotateRendered()           ← border-top/bottom on changed blocks
