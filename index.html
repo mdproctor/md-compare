@@ -35,6 +35,9 @@
   <div class="sep"></div>
   <button id="btn-sync" class="active" onclick="toggleSync()" title="Sync scroll between panels">⟺ Sync</button>
   <button id="btn-swap" onclick="swapPanels()" title="Swap panels A↔B" disabled style="opacity:.4">⇄ Swap</button>
+  <button id="btn-prev" onclick="prevDiff()" title="Previous diff (p)" disabled style="opacity:.4">↑</button>
+  <button id="btn-next" onclick="nextDiff()" title="Next diff (n)" disabled style="opacity:.4">↓</button>
+  <span id="diff-counter" style="font-size:11px;color:#a09080;padding:0 4px;min-width:36px;display:inline-block;text-align:center">— / —</span>
   <div id="topbar-spacer"></div>
   <!-- Phase 2: critique toggle button lives here -->
   <button id="btn-critique" onclick="toggleCritique()" title="Open critique panel (Phase 2)" style="opacity:.4" disabled>✦ Critique</button>
@@ -112,6 +115,7 @@ function panelsWatching(path) {
 let API_PORT    = null;
 let syncEnabled = true, syncing = false, dragging = false;
 let lastChunks = [], lastTotalA = 0, lastTotalB = 0;
+let currentChunkIdx = -1;   // index into lastChunks; -1 = no active chunk
 
 // ── API helpers ──────────────────────────────────────────────────────
 function apiUrl(path) {
@@ -202,12 +206,97 @@ function updateSwapButton() {
 
 function swapPanels() {
   if (!panels.a.path || !panels.b.path) return;
+  currentChunkIdx = -1;
   [panels.a, panels.b] = [panels.b, panels.a];
   syncPanelDOM('a');
   syncPanelDOM('b');
   $('body-a').scrollTop = 0;
   $('body-b').scrollTop = 0;
   updateDiffMap();
+}
+
+// ── Diff navigation ──────────────────────────────────────────────────
+function nonEqIndices() {
+  return lastChunks.reduce((acc, c, i) => { if (c.op !== 'eq') acc.push(i); return acc; }, []);
+}
+
+function chunkOutOfView(ci) {
+  for (const p of ['a', 'b']) {
+    const el = $(`render-${p}`).querySelector(`[data-diff-chunk="${ci}"]`);
+    if (!el) continue;
+    const br = $(`body-${p}`).getBoundingClientRect();
+    const er = el.getBoundingClientRect();
+    return er.bottom < br.top || er.top > br.bottom;
+  }
+  return true;
+}
+
+function scrollToChunk(ci) {
+  for (const p of ['a', 'b']) {
+    const el = $(`render-${p}`).querySelector(`[data-diff-chunk="${ci}"]`);
+    if (!el) continue;
+    const body = $(`body-${p}`);
+    const delta = el.getBoundingClientRect().top - body.getBoundingClientRect().top - 24;
+    if (Math.abs(delta) > 1) body.scrollBy({ top: delta, behavior: 'instant' });
+  }
+}
+
+function updateNavCounter(idx) {
+  const pos = idx.indexOf(currentChunkIdx);
+  $('diff-counter').textContent = pos >= 0 ? `${pos + 1} / ${idx.length}` : '— / —';
+}
+
+function updateNavButtons() {
+  const has = nonEqIndices().length > 0;
+  $('btn-prev').disabled = !has;
+  $('btn-next').disabled = !has;
+  $('btn-prev').style.opacity = has ? '' : '0.4';
+  $('btn-next').style.opacity = has ? '' : '0.4';
+  if (!has) $('diff-counter').textContent = '— / —';
+}
+
+function nextDiff() {
+  const idx = nonEqIndices();
+  if (!idx.length) return;
+  if (currentChunkIdx === -1) {
+    currentChunkIdx = idx[0];
+  } else if (chunkOutOfView(currentChunkIdx)) {
+    const bodyA = $('body-a');
+    const centre = bodyA.getBoundingClientRect().top + bodyA.clientHeight / 2;
+    const found = idx.find(ci => {
+      const el = $('render-a').querySelector(`[data-diff-chunk="${ci}"]`) ||
+                 $('render-b').querySelector(`[data-diff-chunk="${ci}"]`);
+      return el && el.getBoundingClientRect().top >= centre;
+    });
+    currentChunkIdx = found ?? idx[0];
+  } else {
+    const pos = idx.indexOf(currentChunkIdx);
+    currentChunkIdx = idx[(pos + 1) % idx.length];
+  }
+  scrollToChunk(currentChunkIdx);
+  updateNavCounter(idx);
+}
+
+function prevDiff() {
+  const idx = nonEqIndices();
+  if (!idx.length) return;
+  if (currentChunkIdx === -1) {
+    currentChunkIdx = idx[idx.length - 1];
+  } else if (chunkOutOfView(currentChunkIdx)) {
+    const bodyA = $('body-a');
+    const centre = bodyA.getBoundingClientRect().top + bodyA.clientHeight / 2;
+    const found = [...idx].reverse().find(ci => {
+      const el = $('render-a').querySelector(`[data-diff-chunk="${ci}"]`) ||
+                 $('render-b').querySelector(`[data-diff-chunk="${ci}"]`);
+      return el && el.getBoundingClientRect().bottom <= centre;
+    });
+    currentChunkIdx = found ?? idx[idx.length - 1];
+  } else {
+    const pos = idx.indexOf(currentChunkIdx);
+    currentChunkIdx = idx[(pos - 1 + idx.length) % idx.length];
+  }
+  scrollToChunk(currentChunkIdx);
+  updateNavCounter(idx);
 }
 
 function renderMarkdown(panel, content) {
@@ -370,6 +459,8 @@ function updateDiffMap() {
   drawDiffMap(a.length, b.length, chunks);
   annotateRendered('a', panels.a.content, chunks);
   annotateRendered('b', panels.b.content, chunks);
+  currentChunkIdx = -1;
+  updateNavButtons();
 }
 
 // ── Critique panel stub ──────────────────────────────────────────────
@@ -381,6 +472,8 @@ function toggleCritique() {
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
   if (e.key === 's' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); toggleSync(); }
+  if (e.key === 'n') nextDiff();
+  if (e.key === 'p') prevDiff();
 });
 
 // ── Init ─────────────────────────────────────────────────────────────
@@ -425,15 +518,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const ci = lastChunks.findIndex(c =>
       c.op !== 'eq' && c[startKey] <= clickLine && c[endKey] > clickLine);
     if (ci < 0) return;
-    for (const p of ['a', 'b']) {
-      const el = $(`render-${p}`).querySelector(`[data-diff-chunk="${ci}"]`);
-      if (el) {
-        const body = $(`body-${p}`);
-        const relTop = el.getBoundingClientRect().top - body.getBoundingClientRect().top;
-        body.scrollBy({ top: relTop - 24, behavior: 'smooth' });
-        break;
-      }
-    }
+    scrollToChunk(ci);
   });
 });
 </script>

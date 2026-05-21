@@ -3,6 +3,11 @@
 const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
+const { _electron: electron } = require('playwright');
+
+const ELECTRON_BIN = process.env.ELECTRON_BIN ||
+  '/Users/mdproctor/claude/sparge/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron';
+const APP_PATH = path.join(__dirname, '..', '..');
 
 module.exports = async function globalSetup() {
   const fileA = path.join(os.tmpdir(), 'mdcompare-test-a.md');
@@ -52,4 +57,18 @@ module.exports = async function globalSetup() {
 
   process.env.TEST_FILE_A = fileA;
   process.env.TEST_FILE_B = fileB;
+
+  // Warm up the Quarkus JVM once before tests begin. Each spec file launches
+  // its own JVM; cold starts on a loaded machine can take >180s. A single warmup
+  // here loads the JAR bytecode into OS page cache so subsequent launches are fast.
+  // We pass both fixture files so the full startup path (Quarkus start + file fetch
+  // + render) runs — this is the most thorough warmup.
+  // Global setup has no per-test timeout — this can run as long as needed.
+  console.log('[global-setup] warming Quarkus JVM (may take 2-3 min on cold machine)...');
+  const app = await electron.launch({ executablePath: ELECTRON_BIN, args: [APP_PATH, fileA, fileB] });
+  const win  = await app.firstWindow();
+  await win.waitForFunction(() => document.querySelector('#render-a h1') !== null, undefined, { timeout: 0 });
+  await win.waitForFunction(() => document.querySelector('#render-b h1') !== null, undefined, { timeout: 0 });
+  await app.close();
+  console.log('[global-setup] JVM warm, starting tests');
 };
