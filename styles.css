@@ -159,3 +159,24 @@ button.active { background: var(--accent); border-color: var(--accent); color: v
   flex: 1; overflow-y: auto; padding: 16px;
   color: var(--muted); font-size: 12px; font-style: italic;
 }
+
+/* ── Diff summary tooltip ── */
+#diff-summary::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a1814;
+  color: #c8baa0;
+  border: 1px solid #4a4640;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 100;
+}
+#diff-summary:hover::after { opacity: 1; }

@@ -38,6 +38,7 @@
   <button id="btn-prev" onclick="prevDiff()" title="Previous diff (p)" disabled style="opacity:.4">↑</button>
   <button id="btn-next" onclick="nextDiff()" title="Next diff (n)" disabled style="opacity:.4">↓</button>
   <span id="diff-counter" style="font-size:11px;color:#a09080;padding:0 4px;min-width:36px;display:inline-block;text-align:center">— / —</span>
+  <span id="diff-summary" data-tooltip="" style="font-size:11px;color:#a09080;padding:0 6px;cursor:default;position:relative"></span>
   <div id="topbar-spacer"></div>
   <!-- Phase 2: critique toggle button lives here -->
   <button id="btn-critique" onclick="toggleCritique()" title="Open critique panel (Phase 2)" style="opacity:.4" disabled>✦ Critique</button>
@@ -243,6 +244,24 @@ function scrollToChunk(ci) {
 function updateNavCounter(idx) {
   const pos = idx.indexOf(currentChunkIdx);
   $('diff-counter').textContent = pos >= 0 ? `${pos + 1} / ${idx.length}` : '— / —';
+}
+
+function updateDiffSummary() {
+  const mod = lastChunks.filter(c => c.op === 'mod').length;
+  const del = lastChunks.filter(c => c.op === 'del').length;
+  const ins = lastChunks.filter(c => c.op === 'ins').length;
+  const el = $('diff-summary');
+  if (mod + del + ins === 0) {
+    el.textContent = '';
+    el.dataset.tooltip = '';
+    return;
+  }
+  const parts = [];
+  if (mod) parts.push(`~${mod}`);
+  if (del) parts.push(`−${del}`);
+  if (ins) parts.push(`+${ins}`);
+  el.textContent = parts.join(' ');
+  el.dataset.tooltip = '~ modified · − only in A · + only in B';
 }
 
 function updateNavButtons() {
@@ -452,13 +471,19 @@ function annotateRendered(panel, content, chunks) {
 }
 
 function updateDiffMap() {
-  if (!panels.a.content || !panels.b.content) return;
+  if (!panels.a.content || !panels.b.content) {
+    lastChunks = [];
+    updateDiffSummary();
+    updateNavButtons();
+    return;
+  }
   const { a, b, chunks } = lineDiff(panels.a.content, panels.b.content);
   lastChunks = chunks; lastTotalA = a.length; lastTotalB = b.length;
   drawDiffMap(a.length, b.length, chunks);
   annotateRendered('a', panels.a.content, chunks);
   annotateRendered('b', panels.b.content, chunks);
   currentChunkIdx = -1;
+  updateDiffSummary();
   updateNavButtons();
 }
 
