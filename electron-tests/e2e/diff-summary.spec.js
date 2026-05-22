@@ -33,7 +33,7 @@ test.describe('diff summary', () => {
     await window.evaluate(c => { panels.b.content = c; updateDiffMap(); }, originalContentB);
   });
 
-  test('summary total chunk count is symmetric after swap', async () => {
+  test('summary total chunk count is preserved after swap', async () => {
     const before = await window.evaluate(() => document.getElementById('diff-summary').textContent);
     await window.evaluate(() => swapPanels());
     const after = await window.evaluate(() => document.getElementById('diff-summary').textContent);

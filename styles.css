@@ -26,6 +26,7 @@ body {
 #topbar {
   flex-shrink: 0; background: var(--chrome); border-bottom: 2px solid var(--ink);
   padding: 0 16px; display: flex; align-items: center; gap: 12px; height: 44px;
+  overflow: visible;
 }
 #logo {
   font-weight: 700; font-size: 16px;
