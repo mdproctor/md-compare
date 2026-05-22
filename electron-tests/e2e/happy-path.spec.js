@@ -5,26 +5,21 @@ const { launchApp }    = require('./helpers');
 
 // Wrap all tests in a describe block so beforeAll/afterAll run exactly once
 // for the entire suite rather than per-test (Playwright scoping requirement).
-const jsErrors = [];
 
 test.describe('happy path', () => {
-  let app, window;
+  let app, window, jsErrors;
 
   test.beforeAll(async () => {
-    // Launch app — listener must be set up as part of launch
-    const result = await launchApp(
+    ({ app, window, jsErrors } = await launchApp(
       process.env.TEST_FILE_A,
       process.env.TEST_FILE_B
-    );
-    app    = result.app;
-    window = result.window;
-    // Register error listener immediately after window is obtained
-    // (launchApp waits for DOM, so this catches runtime errors not startup errors,
-    // but is still valuable for catching errors triggered by test interactions)
-    window.on('pageerror', e => jsErrors.push(e.message));
+    ));
   });
 
-  test.afterAll(async () => { if (app) await app.close(); });
+  test.afterAll(async () => {
+    expect(jsErrors).toHaveLength(0);
+    if (app) await app.close();
+  });
 
   test('app launches — window visible, no JS errors', async () => {
     await expect(window.locator('#topbar')).toBeVisible();

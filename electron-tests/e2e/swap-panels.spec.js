@@ -3,18 +3,32 @@
 const { test, expect } = require('@playwright/test');
 const { launchApp }    = require('./helpers');
 
+// ── launchApp path guard ─────────────────────────────────────────────────────
+
+test.describe('launchApp path guard', () => {
+  test('throws immediately when fileA is undefined', async () => {
+    await expect(launchApp(undefined, process.env.TEST_FILE_B))
+      .rejects.toThrow(/undefined.*TEST_FILE_A|fileA.*undefined/i);
+  });
+});
+
 // ── Both files loaded ────────────────────────────────────────────────────────
 
 test.describe('swap panels — both files loaded', () => {
   let app, window, originalPathA, originalPathB;
 
+  let jsErrors;
+
   test.beforeAll(async () => {
-    ({ app, window } = await launchApp(process.env.TEST_FILE_A, process.env.TEST_FILE_B));
+    ({ app, window, jsErrors } = await launchApp(process.env.TEST_FILE_A, process.env.TEST_FILE_B));
     originalPathA = await window.locator('#path-a').textContent();
     originalPathB = await window.locator('#path-b').textContent();
   });
 
-  test.afterAll(async () => { if (app) await app.close(); });
+  test.afterAll(async () => {
+    expect(jsErrors).toHaveLength(0);
+    if (app) await app.close();
+  });
 
   test('swap button is enabled when both panels are loaded', async () => {
     await expect(window.locator('#btn-swap')).toBeEnabled();
@@ -67,6 +81,10 @@ test.describe('swap panels — both files loaded', () => {
     expect(scrollA).toBe(0);
     expect(scrollB).toBe(0);
     await window.locator('#btn-swap').click(); // restore
+  });
+
+  test('no JS errors occur during load and swap operations', async () => {
+    expect(jsErrors).toHaveLength(0);
   });
 
   test('swap button is disabled when a panel path is cleared', async () => {

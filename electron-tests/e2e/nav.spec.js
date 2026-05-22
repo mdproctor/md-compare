@@ -4,14 +4,17 @@ const { test, expect } = require('@playwright/test');
 const { launchApp }    = require('./helpers');
 
 test.describe('diff navigation', () => {
-  let app, window, originalContentB;
+  let app, window, jsErrors, originalContentB;
 
   test.beforeAll(async () => {
-    ({ app, window } = await launchApp(process.env.TEST_FILE_A, process.env.TEST_FILE_B));
+    ({ app, window, jsErrors } = await launchApp(process.env.TEST_FILE_A, process.env.TEST_FILE_B));
     originalContentB = await window.evaluate(() => panels.b.content);
   });
 
-  test.afterAll(async () => { if (app) await app.close(); });
+  test.afterAll(async () => {
+    expect(jsErrors).toHaveLength(0);
+    if (app) await app.close();
+  });
 
   test('nav buttons are enabled when both panels have diffs', async () => {
     await expect(window.locator('#btn-next')).toBeEnabled();
@@ -71,8 +74,7 @@ test.describe('diff navigation', () => {
     // replaced the old single-panel break loop with a both-panels implementation).
     // With short fixture content that fits in the viewport, scrollTop stays 0 —
     // so we verify the handler runs without errors rather than checking scroll position.
-    const jsErrors = [];
-    window.on('pageerror', e => jsErrors.push(e.message));
+    // jsErrors is collected globally by launchApp — checked in afterAll.
     const coords = await window.evaluate(() => {
       const canvas = document.getElementById('diff-map');
       const firstDiff = lastChunks.find(c => c.op !== 'eq');
@@ -85,6 +87,5 @@ test.describe('diff navigation', () => {
     });
     if (!coords) return;
     await window.mouse.click(coords.pageX, coords.pageY);
-    expect(jsErrors).toHaveLength(0);
   });
 });

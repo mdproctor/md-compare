@@ -4,14 +4,17 @@ const { test, expect } = require('@playwright/test');
 const { launchApp }    = require('./helpers');
 
 test.describe('diff summary', () => {
-  let app, window, originalContentB;
+  let app, window, jsErrors, originalContentB;
 
   test.beforeAll(async () => {
-    ({ app, window } = await launchApp(process.env.TEST_FILE_A, process.env.TEST_FILE_B));
+    ({ app, window, jsErrors } = await launchApp(process.env.TEST_FILE_A, process.env.TEST_FILE_B));
     originalContentB = await window.evaluate(() => panels.b.content);
   });
 
-  test.afterAll(async () => { if (app) await app.close(); });
+  test.afterAll(async () => {
+    expect(jsErrors).toHaveLength(0);
+    if (app) await app.close();
+  });
 
   test('summary shows breakdown after loading differing files', async () => {
     const text = await window.evaluate(() => document.getElementById('diff-summary').textContent);

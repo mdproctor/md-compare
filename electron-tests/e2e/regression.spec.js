@@ -7,18 +7,19 @@ const os = require('os');
 const path = require('path');
 
 test.describe('regression', () => {
-  let app, window;
+  let app, window, jsErrors;
 
   test.beforeAll(async () => {
-    const result = await launchApp(
+    ({ app, window, jsErrors } = await launchApp(
       process.env.TEST_FILE_A,
       process.env.TEST_FILE_B
-    );
-    app    = result.app;
-    window = result.window;
+    ));
   });
 
-  test.afterAll(async () => { if (app) await app.close(); });
+  test.afterAll(async () => {
+    expect(jsErrors).toHaveLength(0);
+    if (app) await app.close();
+  });
 
   // ── Sync scroll ──────────────────────────────────────────────────────
 
