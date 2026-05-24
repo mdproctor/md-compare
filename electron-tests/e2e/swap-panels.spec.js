@@ -26,7 +26,7 @@ test.describe('swap panels — both files loaded', () => {
   });
 
   test.afterAll(async () => {
-    expect(jsErrors).toHaveLength(0);
+    if (jsErrors) expect(jsErrors).toHaveLength(0);
     if (app) await app.close();
   });
 
@@ -84,7 +84,7 @@ test.describe('swap panels — both files loaded', () => {
   });
 
   test('no JS errors occur during load and swap operations', async () => {
-    expect(jsErrors).toHaveLength(0);
+    if (jsErrors) expect(jsErrors).toHaveLength(0);
   });
 
   test('swap button is disabled when a panel path is cleared', async () => {

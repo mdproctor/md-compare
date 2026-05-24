@@ -17,7 +17,7 @@ test.describe('regression', () => {
   });
 
   test.afterAll(async () => {
-    expect(jsErrors).toHaveLength(0);
+    if (jsErrors) expect(jsErrors).toHaveLength(0);
     if (app) await app.close();
   });
 

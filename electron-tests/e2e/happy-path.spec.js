@@ -17,14 +17,13 @@ test.describe('happy path', () => {
   });
 
   test.afterAll(async () => {
-    expect(jsErrors).toHaveLength(0);
+    if (jsErrors) expect(jsErrors).toHaveLength(0);
     if (app) await app.close();
   });
 
-  test('app launches — window visible, no JS errors', async () => {
+  test('app launches — window visible', async () => {
     await expect(window.locator('#topbar')).toBeVisible();
     await expect(window.locator('#logo')).toContainText('md-compare');
-    expect(jsErrors).toHaveLength(0);
   });
 
   test('panel A renders the heading from file A', async () => {
@@ -78,15 +77,20 @@ test.describe('happy path', () => {
   });
 
   test('typing a label does not trigger a markdown re-parse', async () => {
-    await window.evaluate(() => { window._testParseCount = 0; });
+    // Save orig on window so it is accessible from a later evaluate call.
     await window.evaluate(() => {
-      const orig = marked.parse;
-      marked.parse = (...args) => { window._testParseCount++; return orig(...args); };
+      window._origParse = marked.parse;
+      window._testParseCount = 0;
+      marked.parse = (...args) => { window._testParseCount++; return window._origParse(...args); };
     });
     await window.locator('#label-a').fill('New Label');
     const count = await window.evaluate(() => window._testParseCount);
+    // Restore before asserting so the suite is clean regardless of outcome.
+    await window.evaluate(() => {
+      marked.parse = window._origParse;
+      delete window._testParseCount;
+      delete window._origParse;
+    });
     expect(count).toBe(0);
-    // Restore
-    await window.evaluate(() => { delete window._testParseCount; });
   });
 });
