@@ -5,7 +5,7 @@ date: 2026-05-25
 type: phase-update
 entry_type: note
 subtype: diary
-projects: [md-compare]
+projects: [drafthouse]
 tags: [testing, diff, marked, javascript]
 ---
 

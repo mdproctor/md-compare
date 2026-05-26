@@ -5,7 +5,7 @@ date: 2026-05-25
 type: phase-update
 entry_type: note
 subtype: diary
-projects: [md-compare]
+projects: [drafthouse]
 tags: [electron, playwright, scroll-sync, testing, race-condition]
 ---
 
